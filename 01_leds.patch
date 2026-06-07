@@ -1,0 +1,14 @@
+diff --git a/target/linux/ramips/base-files/etc/board.d/01_leds b/target/linux/ramips/base-files/etc/board.d/01_leds
+index 5c005db0c1..7073c08205 100755
+--- a/target/linux/ramips/base-files/etc/board.d/01_leds
++++ b/target/linux/ramips/base-files/etc/board.d/01_leds
+@@ -446,6 +446,9 @@ youku-yk1)
+        set_wifi_led "$boardname:blue:air"
+        ucidef_set_led_switch "wan" "wan" "$boardname:blue:wan" "switch0" "0x10"
+        ;;
++tplink,tl-r470gp-ac-v5)
++       ucidef_set_led_timer "SYS" "SYS" "$boardname:green:system" "500" "500"
++       ;;
+ esac
+ 
+ board_config_flush

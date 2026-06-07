@@ -1,0 +1,118 @@
+name: Build OpenWrt 19.07 for TL-R470GP-AC
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+
+env:
+  REPO_URL: https://github.com/openwrt/openwrt.git
+  REPO_BRANCH: v19.07.10
+  CONFIG_FILE: seed.config
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize Environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo -E apt-get -qq update
+          sudo -E apt-get -qq install -y build-essential ccache ecj fastjar file g++ gawk gettext git libelf-dev libncurses5-dev libncursesw5-dev libssl-dev python2 python3 python3-distutils python3-setuptools rsync subversion swig time u-boot-tools unzip zlib1g-dev
+          sudo -E apt-get -qq autoremove --purge
+          sudo -E apt-get -qq clean
+          sudo timedatectl set-timezone "${{ env.TZ }}"
+
+      - name: Clone OpenWrt Source
+        run: |
+          git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
+
+      - name: Cache DL
+        uses: actions/cache@v4
+        with:
+          path: openwrt/dl
+          key: dl-${{ runner.os }}-${{ env.REPO_BRANCH }}
+
+      - name: Cache CCACHE
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ runner.os }}
+
+      - name: Update & Install Feeds
+        working-directory: openwrt
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Apply Custom Patch
+        working-directory: openwrt
+        run: |
+          cp ../TL-R470GPACV5.dts target/linux/ramips/dts/
+
+          git apply ../01_leds.patch
+          git apply ../02_network.patch
+
+      - name: Add Device Definition
+        run: |
+          cat << 'EOF' >> openwrt/target/linux/ramips/image/mt7621.mk
+
+          define Device/tplink_tl-r470gp-ac-v5
+            DTS := TL-R470GPACV5
+            IMAGE_SIZE := $(ralink_default_fw_size_16M)
+            DEVICE_TITLE := TP-Link TL-R470GP-AC v5
+          endef
+          TARGET_DEVICES += tplink_tl-r470gp-ac-v5
+
+          EOF
+
+      - name: Load Configuration
+        run: |
+          [ -e files ] && mv files openwrt/files
+          cp ${{ env.CONFIG_FILE }} openwrt/.config
+          cd openwrt
+          make defconfig
+
+      - name: Download Packages
+        working-directory: openwrt
+        run: |
+          make download -j$(nproc)
+
+      - name: Setup CCACHE
+        run: |
+          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+
+          ccache -M 2G
+          ccache -z
+
+      - name: Compile the Firmware
+        id: compile
+        working-directory: openwrt
+        run: |
+          make -j$(nproc) USE_CCACHE=1 V=s
+          ccache -s
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: Organize Target Files
+        id: organize
+        if: steps.compile.outputs.status == 'success'
+        run: |
+          cd openwrt/bin/targets/ramips/mt7621
+          rm -rf packages
+          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: Upload Firmware to Artifacts
+        uses: actions/upload-artifact@v4
+        if: steps.organize.outputs.status == 'success'
+        with:
+          name: OpenWrt-19.07-TL-R470GP-AC
+          path: ${{ env.FIRMWARE }}/*.bin
